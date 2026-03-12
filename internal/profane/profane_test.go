@@ -11,10 +11,27 @@ func TestRemoveProfane(t *testing.T) {
 		input string
 		want string
 	}{
-		{"all words", 
-		"BingoBongo kerfuffle sharbert fornax shoopdydoo!", 
-		"BingoBongo **** **** **** shoopdydoo!",
+		{
+			"all words", 
+			"BingoBongo kerfuffle sharbert fornax shoopdydoo!", 
+			"BingoBongo **** **** **** shoopdydoo!",
 		 },
+		 {
+			"capitalised",
+			"BinGoBonGo KERfuffle",
+			"BinGoBonGo ****",
+		 },
+		 {
+			"empty string",
+			"",
+			"",
+		 },
+		 {
+			"exclamations are exempt",
+			"kerfuffle! sharbert! fornax!",
+			"kerfuffle! sharbert! fornax!",
+		 },
+
 	}
 
 	for _, item := range tests {// Loop over each test case
