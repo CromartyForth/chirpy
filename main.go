@@ -13,22 +13,55 @@ import (
 	"os"
 	"sync/atomic"
 	"github.com/CromartyForth/chirpy/internal/profane"
+	"database/sql"
+	"github.com/CromartyForth/chirpy/internal/database"
+
 )
 
-type user struct {
+type myUser struct {
 	ID uuid.UUID `json:"id"`
 	CreatedAt time.Time `json:"created_at"`
-	ModifiedAt time.Time `json:"modified_at"`
+	UpdatedAt time.Time `json:"updated_at"`
 	Email string `json:"email"`
-
 }
 
+type apiConfig struct {
+	fileserverHits atomic.Int32
+	dbQueries *database.Queries
+	platform string
+}
+
+type email struct {
+	Email string `json:"email"`
+}
+
+type myChirp struct {
+	ID uuid.UUID `json:"id"`
+	CreatedAt time.Time `json:"created_at"`
+	UpdatedAt time.Time `json:"updated_at"`
+	Body string `json:"body"`
+	UserID uuid.UUID `json:"user_id"`
+}
+
+
 func main() {
+	// initialise apiConfig
+	cfig := apiConfig{}
+
 	// get env contents
 	godotenv.Load()
+	dbURL := os.Getenv("DB_URL")
+	platform := os.Getenv("PLATFORM")
 
-	// create metrics middleware storage
-	metrics := apiMetrics{}
+	// open connection to database, store in cfig
+	db, err := sql.Open("postgres", dbURL)
+	if err != nil {
+		fmt.Printf("error connecting to database")
+		os.Exit(1)
+	}
+	// add to cfig
+	cfig.dbQueries = database.New(db)
+	cfig.platform = platform
 
 	// Create a new http.ServeMux
 	mux := http.NewServeMux()
@@ -41,23 +74,112 @@ func main() {
 	
 	fileServer :=  http.FileServer(http.Dir("."))
 
-	mux.Handle("/app/", http.StripPrefix("/app", metrics.middlewareMetricInc(fileServer)))
+	mux.Handle("/app/", http.StripPrefix("/app", cfig.middlewareMetricInc(fileServer)))
 	mux.HandleFunc("GET /api/healthz", Readyness)
-	mux.HandleFunc("GET /admin/metrics", metrics.getCount)
-	mux.HandleFunc("POST /admin/reset", metrics.reset)
-	mux.HandleFunc("POST /api/validate_chirp", validate)
-	mux.HandleFunc("POST /api/users", createUser)
-	// POST request at /api/validate_chirp
-
-
-	err := server.ListenAndServe()
+	mux.HandleFunc("GET /admin/metrics", cfig.getCount)
+	mux.HandleFunc("POST /admin/reset", cfig.reset)
+	// mux.HandleFunc("POST /api/validate_chirp", validate)
+	mux.HandleFunc("POST /api/users", cfig.createUser)
+	mux.HandleFunc("POST /api/chirps", cfig.createChirp)
+	
+	// start the server
+	err = server.ListenAndServe()
 	if err != nil {
 		fmt.Printf("Server Error: %v", err)
 		os.Exit(1)
 	}
-
-
 }
+
+
+func (a *apiConfig) createChirp(w http.ResponseWriter, r *http.Request) {
+	
+	// get the params from the json body
+	params := myChirp{} // partially used
+	decoder := json.NewDecoder(r.Body)
+	err := decoder.Decode(&params)
+	if err != nil {
+		respondWithError(w, 500, "Error decoding POST body")
+		return
+	}
+
+	// Validate params
+	if params.Body == "" || params.UserID == uuid.Nil {
+		respondWithError(w, 400, "missing chirp or username")
+		return
+	}
+
+	// check length - 140 should be in config
+	if len(params.Body) > 140 {
+		fmt.Printf("Chirp Length: %v", len(params.Body))
+		respondWithError(w, 400, "Chirp is too long")
+	}
+
+	// remove profanity
+	cleanBody := profane.RemoveProfane(params.Body)
+
+	// chirp to chirp
+	chirpChirp := database.CreatChirpParams {
+		Body: cleanBody,
+		UserID: params.UserID,
+	}
+
+	chirp, err := a.dbQueries.CreatChirp(r.Context(),chirpChirp)
+	if err != nil {
+		respondWithError(w, 500, fmt.Sprintf("Error creating chirp in database: %v", err))
+		return
+	}
+
+	// chirp to chirp
+	newChirp := myChirp{
+		ID: chirp.ID,
+		CreatedAt: chirp.CreatedAt,
+		UpdatedAt: chirp.UpdatedAt,
+		Body: chirp.Body,
+		UserID: chirp.UserID,
+	}
+
+	// respond ok
+	respondWithJSON(w, 201, newChirp)
+}
+
+
+func (a *apiConfig) createUser(w http.ResponseWriter, r *http.Request) {
+	
+	// get the email string from json body.
+	params := email{}
+	decoder := json.NewDecoder(r.Body)
+	err := decoder.Decode(&params)
+	if err != nil {
+		respondWithError(w, 500, "Error decoding POST body")
+		return
+	}
+
+	// validate email - This could be a whole fuction using regex ect
+	if params.Email == "" {
+		respondWithError(w, 400, "Email not supplied")
+		return
+	}
+
+	// create user
+	user, err := a.dbQueries.CreateUser(r.Context(), params.Email)
+	if err != nil {
+		respondWithError(w, 500, fmt.Sprintf("Error creating user: %v", err))
+		return
+	}
+
+	// map database respose to user struct
+	response := myUser{
+		ID: user.ID,
+		CreatedAt: user.CreatedAt, 
+		UpdatedAt: user.CreatedAt,
+		Email: user.Email,
+	}
+
+	//marshal and respond
+	respondWithJSON(w, 201, response)
+}
+
+
 
 func Readyness(w http.ResponseWriter, r *http.Request) {
 	w.Header().Add("Content-Type", "text/plain; charset=utf-8")
@@ -68,6 +190,7 @@ func Readyness(w http.ResponseWriter, r *http.Request) {
 	}
 }
 
+/* To be removed.
 func validate(w http.ResponseWriter, r *http.Request) {
 
 	// read from body - expecting json format
@@ -83,7 +206,7 @@ func validate(w http.ResponseWriter, r *http.Request) {
 
 	} else if len(params.Body) > 140 {
 		fmt.Printf("Chirp Length: %v", len(params.Body))
-		respondWithError(w, 400, fmt.Sprintln("Chirp is too long"))
+		respondWithError(w, 400, "Chirp is too long")
 
 	} else {
 		fmt.Printf("Chirp Length: %v", len(params.Body))
@@ -99,6 +222,7 @@ func validate(w http.ResponseWriter, r *http.Request) {
 		respondWithJSON(w, 200, payload)
 	}
 }
+*/
 
 func respondWithError(w http.ResponseWriter, code int, msg string) {
 	type respErr struct {
@@ -110,7 +234,6 @@ func respondWithError(w http.ResponseWriter, code int, msg string) {
 	}
 
 	respondWithJSON(w, code, payload)
-	return
 }
 
 func respondWithJSON(w http.ResponseWriter, code int, payload any){
@@ -124,16 +247,12 @@ func respondWithJSON(w http.ResponseWriter, code int, payload any){
 	w.Header().Set("Content-Type", "application/json")
 	w.WriteHeader(code)
 	w.Write(dat)
-	return
 }
 
 
 // Metrics Middleware
-type apiMetrics struct {
-	fileserverHits atomic.Int32
-}
 
-func (a *apiMetrics) middlewareMetricInc(next http.Handler) http.Handler {
+func (a *apiConfig) middlewareMetricInc(next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request){
 		newCount := a.fileserverHits.Add(1)
 		fmt.Printf("New Count is: %v\n", newCount)
@@ -142,7 +261,7 @@ func (a *apiMetrics) middlewareMetricInc(next http.Handler) http.Handler {
 }
 
 
-func (a *apiMetrics) getCount(w http.ResponseWriter, r *http.Request) {
+func (a *apiConfig) getCount(w http.ResponseWriter, r *http.Request) {
 	
 	// get count
 	count := a.fileserverHits.Load()
@@ -159,7 +278,20 @@ func (a *apiMetrics) getCount(w http.ResponseWriter, r *http.Request) {
 	}
 }
 
-func (a *apiMetrics) reset(w http.ResponseWriter, r *http.Request) {
+func (a *apiConfig) reset(w http.ResponseWriter, r *http.Request) {
+	// development only
+	if a.platform != "dev" {
+		respondWithError(w, 403, "Forbidden!")
+		return
+	}
+
+	// delete all users
+	err := a.dbQueries.DeleteAllUsers(r.Context())
+	if err != nil {
+		respondWithError(w, 500, "error deleting users")
+		return
+	}
+	
 	// reset count and return old value
 	count := a.fileserverHits.Swap(0)
 	resetTxt := fmt.Sprintf("Count of %v reset to 0\n", count)
@@ -167,7 +299,7 @@ func (a *apiMetrics) reset(w http.ResponseWriter, r *http.Request) {
 	// write response
 	w.Header().Add("Content-Type", "text/plain; charset=utf-8")
 	w.WriteHeader(200)
-	_, err := w.Write([]byte(string(resetTxt)))
+	_, err = w.Write([]byte(string(resetTxt)))
 	if err != nil {
 		fmt.Printf("Error writing body: %v\n", err)
 	}
