@@ -81,6 +81,7 @@ func main() {
 	// mux.HandleFunc("POST /api/validate_chirp", validate)
 	mux.HandleFunc("POST /api/users", cfig.createUser)
 	mux.HandleFunc("POST /api/chirps", cfig.createChirp)
+	mux.HandleFunc("GET /api/chirps", cfig.getChirps)
 	
 	// start the server
 	err = server.ListenAndServe()
@@ -90,6 +91,29 @@ func main() {
 	}
 }
 
+func (a *apiConfig) getChirps(w http.ResponseWriter, r *http.Request) {
+	// collect them all
+	chirpArray, err := a.dbQueries.GetAllChirps(r.Context())
+	if err != nil {
+		respondWithError(w, 500, "error recieving from database")
+	}
+	
+	// create array of chirps
+	newChirpArray := make([]myChirp, 0)
+	// itterate over chirpArray converting to our format
+	for _, chirp := range(chirpArray) {
+		newChirp := myChirp{
+		ID: chirp.ID,
+		CreatedAt: chirp.CreatedAt,
+		UpdatedAt: chirp.UpdatedAt,
+		Body: chirp.Body,
+		UserID: chirp.UserID,
+	}
+		newChirpArray = append(newChirpArray, newChirp)
+	}
+
+	respondWithJSON(w, 200, newChirpArray)
+}
 
 func (a *apiConfig) createChirp(w http.ResponseWriter, r *http.Request) {
 	
