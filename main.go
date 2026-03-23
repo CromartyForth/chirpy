@@ -19,22 +19,29 @@ import (
 
 )
 
-type myUser struct {
+type MyUser struct {
 	ID uuid.UUID `json:"id"`
 	CreatedAt time.Time `json:"created_at"`
 	UpdatedAt time.Time `json:"updated_at"`
 	Email string `json:"email"`
 }
 
+type response struct {
+	MyUser
+	Token string `json:"token"`
+}
+
 type apiConfig struct {
 	fileserverHits atomic.Int32
 	dbQueries *database.Queries
 	platform string
+	aSecret string
 }
 
 type login struct {
 	Email string `json:"email"`
 	Password string `json:"password"`
+	ExpiresInSeconds int `json:"expires_in_seconds"`
 }
 
 type myChirp struct {
@@ -50,10 +57,11 @@ func main() {
 	// initialise apiConfig
 	cfig := apiConfig{}
 
-	// get env contents
+	// get env contents store in cfig
 	godotenv.Load()
 	dbURL := os.Getenv("DB_URL")
-	platform := os.Getenv("PLATFORM")
+	cfig.platform = os.Getenv("PLATFORM")
+	cfig.aSecret = os.Getenv("SECRET")
 
 	// open connection to database, store in cfig
 	db, err := sql.Open("postgres", dbURL)
@@ -61,9 +69,8 @@ func main() {
 		fmt.Printf("error connecting to database")
 		os.Exit(1)
 	}
-	// add to cfig
 	cfig.dbQueries = database.New(db)
-	cfig.platform = platform
+	
 
 	// Create a new http.ServeMux
 	mux := http.NewServeMux()
@@ -120,16 +127,32 @@ func (a *apiConfig) login(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	// check the expires in param default to 1hr outside of range
+	if params.ExpiresInSeconds == 0 || params.ExpiresInSeconds > 3600 {
+		params.ExpiresInSeconds = 3600
+	}
+	expiresInSeconds := time.Duration(params.ExpiresInSeconds) * time.Second
+
+	// make token
+	myToken, err := auth.MakeJWT(user.ID, a.aSecret, expiresInSeconds)
+	if err != nil {
+		respondWithError(w, 500, "Error making token")
+	}
+
 	// format response
-	response := myUser{
+	myUser := MyUser{
 		ID: user.ID,
 		CreatedAt: user.CreatedAt, 
 		UpdatedAt: user.CreatedAt,
 		Email: user.Email,
 	}
+	myResponse := response{
+		MyUser: myUser,
+		Token: myToken,
+	}
 
 	// respond to login
-	respondWithJSON(w, 200, response)
+	respondWithJSON(w, 200, myResponse)
 
 	
 }
@@ -208,6 +231,9 @@ func (a *apiConfig) createChirp(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+
+
+
 	// check length - 140 should be in config
 	if len(params.Body) > 140 {
 		fmt.Printf("Chirp Length: %v", len(params.Body))
@@ -259,6 +285,10 @@ func (a *apiConfig) createUser(w http.ResponseWriter, r *http.Request) {
 		respondWithError(w, 400, "Email not supplied")
 		return
 	}
+	if params.Password == "" {
+		respondWithError(w, 400, "Password not supplied")
+		return
+	}
 
 	// get hash of password
 	hash, err := auth.HashPassword(params.Password)
@@ -267,7 +297,6 @@ func (a *apiConfig) createUser(w http.ResponseWriter, r *http.Request) {
 	userParams := database.CreateUserParams {
 		Email: params.Email,
 		HashedPassword: hash,
-
 	}
 
 	// create user
@@ -278,7 +307,7 @@ func (a *apiConfig) createUser(w http.ResponseWriter, r *http.Request) {
 	}
 
 	// map database respose to user struct
-	response := myUser{
+	response := MyUser{
 		ID: user.ID,
 		CreatedAt: user.CreatedAt, 
 		UpdatedAt: user.CreatedAt,

@@ -5,6 +5,7 @@ import (
 	"testing"
 	"time"
 	"github.com/google/uuid"
+	"net/http"
 )
 
 func TestPasswordHashing(t *testing.T) {
@@ -37,4 +38,19 @@ func TestJWT(t *testing.T) {
 	if err != nil {
 		t.Errorf("Error matching token: %v", err)
 	}
+}
+
+func TestGetBearerToken(t *testing.T) {
+
+	// create faux header - type Header map[string][]string
+	header := http.Header{
+		"Authorization": []string{"MyBearerTolkenOfGreatLenght"},
+	}
+	_, err := GetBearerToken(header)
+	if err != nil {
+		t.Errorf("Error getting token: %v", err)
+	}
+
+
+
 }

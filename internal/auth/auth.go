@@ -2,11 +2,13 @@ package auth
 
 import (
 	"fmt"
-	"time"
 	"net/http"
+	"strings"
+	"time"
+
 	"github.com/alexedwards/argon2id"
-	"github.com/google/uuid"
 	"github.com/golang-jwt/jwt/v5"
+	"github.com/google/uuid"
 )
 
 func HashPassword(password string) (string, error){
@@ -76,5 +78,27 @@ func ValidateJWT(tokenString, tokenSecret string) (uuid.UUID, error) {
 }
 
 func GetBearerToken(headers http.Header) (string, error){
-	return "", nil
+	
+	// is there an Authorization header
+	
+	myValue, ok := headers["Authorization"]
+	if !ok {
+		return "", fmt.Errorf("No Authorization header")	
+	}
+
+	// strip Bearer
+	fields := strings.Fields(myValue[0])
+	return fields[1], nil
 }
+
+/*
+val, ok := myMap["foo"]
+// If the key exists
+if ok {
+    // Do something
+}
+
+if val, ok := myMap["foo"]; ok {
+    //do something here
+}
+*/
