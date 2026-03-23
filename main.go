@@ -15,6 +15,7 @@ import (
 	"github.com/CromartyForth/chirpy/internal/profane"
 	"database/sql"
 	"github.com/CromartyForth/chirpy/internal/database"
+	"github.com/CromartyForth/chirpy/internal/auth"
 
 )
 
@@ -31,8 +32,9 @@ type apiConfig struct {
 	platform string
 }
 
-type email struct {
+type login struct {
 	Email string `json:"email"`
+	Password string `json:"password"`
 }
 
 type myChirp struct {
@@ -82,6 +84,9 @@ func main() {
 	mux.HandleFunc("POST /api/users", cfig.createUser)
 	mux.HandleFunc("POST /api/chirps", cfig.createChirp)
 	mux.HandleFunc("GET /api/chirps", cfig.getChirps)
+	mux.HandleFunc("GET /api/chirps/{chirpID}",cfig.getChirpsByID)
+	mux.HandleFunc("POST /api/login", cfig.login)
+	
 	
 	// start the server
 	err = server.ListenAndServe()
@@ -90,6 +95,77 @@ func main() {
 		os.Exit(1)
 	}
 }
+
+func (a *apiConfig) login(w http.ResponseWriter, r *http.Request) {
+	// get the params from the json body
+	params := login{}
+	decoder := json.NewDecoder(r.Body)
+	err := decoder.Decode(&params)
+	if err != nil {
+		respondWithError(w, 500, "Error decoding POST body")
+		return
+	}
+
+	// get user by email
+	user, err := a.dbQueries.GetUserByEmail(r.Context(), params.Email)
+	if err != nil {
+		respondWithError(w, 401, "Unauthorized")
+		return
+	}
+
+	// check hashes match
+	isMatch, err := auth.CheckPasswordHash(params.Password, user.HashedPassword)
+	if err != nil || isMatch == false{
+		respondWithError(w, 401, "Unauthorised")
+		return
+	}
+
+	// format response
+	response := myUser{
+		ID: user.ID,
+		CreatedAt: user.CreatedAt, 
+		UpdatedAt: user.CreatedAt,
+		Email: user.Email,
+	}
+
+	// respond to login
+	respondWithJSON(w, 200, response)
+
+	
+}
+
+func (a *apiConfig) getChirpsByID(w http.ResponseWriter, r *http.Request) {
+	
+	// get the path "id" value, http.Request.PathValue
+	chirpID := r.PathValue("chirpID")
+	// convert to UUID
+	chirpUUID, err := uuid.Parse(chirpID)
+	if err != nil {
+		respondWithError(w, 404, "Invalid UUID")
+		return
+	}
+
+	// git it from the database
+	chirp, err := a.dbQueries.GetChirpByID(r.Context(), chirpUUID)
+	if err != nil {
+		respondWithError(w, 404, "Chirp not found")
+		return
+	}
+	
+	// format response
+	chirpJSON := myChirp{
+		ID: chirp.ID,
+		CreatedAt: chirp.CreatedAt,
+		UpdatedAt: chirp.UpdatedAt,
+		Body: chirp.Body,
+		UserID: chirp.UserID,
+	}
+
+	// sent response
+	respondWithJSON(w, 200, chirpJSON)
+}
+
+
 
 func (a *apiConfig) getChirps(w http.ResponseWriter, r *http.Request) {
 	// collect them all
@@ -170,7 +246,7 @@ func (a *apiConfig) createChirp(w http.ResponseWriter, r *http.Request) {
 func (a *apiConfig) createUser(w http.ResponseWriter, r *http.Request) {
 	
 	// get the email string from json body.
-	params := email{}
+	params := login{}
 	decoder := json.NewDecoder(r.Body)
 	err := decoder.Decode(&params)
 	if err != nil {
@@ -184,8 +260,18 @@ func (a *apiConfig) createUser(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	// get hash of password
+	hash, err := auth.HashPassword(params.Password)
+	
+	// CreateUserParams
+	userParams := database.CreateUserParams {
+		Email: params.Email,
+		HashedPassword: hash,
+
+	}
+
 	// create user
-	user, err := a.dbQueries.CreateUser(r.Context(), params.Email)
+	user, err := a.dbQueries.CreateUser(r.Context(), userParams)
 	if err != nil {
 		respondWithError(w, 500, fmt.Sprintf("Error creating user: %v", err))
 		return
