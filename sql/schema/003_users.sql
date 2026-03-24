@@ -4,4 +4,4 @@ ADD COLUMN hashed_password TEXT NOT NULL DEFAULT 'unset';
 
 -- +goose Down
 ALTER TABLE users
-drop COLUMN hashed_password;
+DROP COLUMN hashed_password;

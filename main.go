@@ -104,6 +104,7 @@ func main() {
 	mux.HandleFunc("POST /api/refresh", cfig.refresh)
 	mux.HandleFunc("POST /api/revoke", cfig.revoke)
 	mux.HandleFunc("PUT /api/users", cfig.updateUser)
+	mux.HandleFunc("DELETE /api/chirps/{chirpID}", cfig.deleteChirpByID)
 	
 	
 	// start the server
@@ -113,6 +114,109 @@ func main() {
 		os.Exit(1)
 	}
 }
+
+func (a *apiConfig) deleteChirpByID (w http.ResponseWriter, r *http.Request) {
+	// get the auth token from the header
+	token, err := auth.GetBearerToken(r.Header)
+	if err != nil {
+		respondWithError(w, http.StatusUnauthorized, "Error extracting token")
+		return
+	}
+
+	// validate token
+	user, err := auth.ValidateJWT(token, a.aSecret)
+	if err != nil {
+		respondWithError(w, http.StatusUnauthorized, "invalid token")
+	}
+
+	// get the path "id" value, http.Request.PathValue
+	chirpID := r.PathValue("chirpID")
+	// convert to UUID
+	chirpUUID, err := uuid.Parse(chirpID)
+	if err != nil {
+		respondWithError(w, http.StatusUnauthorized, "Invalid UUID")
+		return
+	}
+
+	// get chirp
+	chirp, err := a.dbQueries.GetChirpByID(r.Context(), chirpUUID)
+	if err != nil {
+		respondWithError(w, http.StatusNotFound, "Chirp not found")
+		return
+	}
+
+	// is user owner of chirp
+	if user != chirp.UserID {
+		respondWithError(w, http.StatusForbidden, "ids non matching")
+		return
+	}
+
+	// delete chirp by id
+	err = a.dbQueries.DeleteChirpByID(r.Context(), chirp.ID)
+	if err != nil {
+		respondWithError(w, http.StatusInternalServerError, "Error deleting chirp")
+	}
+
+	// respond// respond with http.ResonseWriter
+	w.WriteHeader(http.StatusNoContent)
+}
+
+
+func (a *apiConfig) updateUser(w http.ResponseWriter, r *http.Request) {
+	// get the auth token from the header
+	token, err := auth.GetBearerToken(r.Header)
+	if err != nil {
+		respondWithError(w, http.StatusUnauthorized, "Error extracting token")
+		return
+	}
+
+	// verify token
+	user, err := auth.ValidateJWT(token, a.aSecret)
+	if err != nil {
+		respondWithError(w, http.StatusUnauthorized, fmt.Sprintf("Error validating token: %v", err))
+		return
+	}
+	
+	// get params from body
+	params := login{}
+	decoder := json.NewDecoder(r.Body)
+	err = decoder.Decode(&params)
+	if err != nil {
+		respondWithError(w, 500, fmt.Sprintf("Error decoding POST body: %v", err))
+		return
+	}
+
+	// hash new password
+	hashedPassword, err := auth.HashPassword(params.Password)
+	if err != nil {
+		respondWithError(w, http.StatusInternalServerError, "error creating password hash")
+	}
+
+	// prepare update params
+	updateParams := database.UpdateUserParams{
+		Email: params.Email,
+		HashedPassword: hashedPassword,
+		ID: user,
+	}
+
+	// update password and email
+	updatedUser, err := a.dbQueries.UpdateUser(r.Context(), updateParams)
+	if err != nil {
+		respondWithError(w, http.StatusInternalServerError, "error updating database")
+	}
+
+	// prepare update.
+	response := MyUser{ 
+		ID: user,  
+    	CreatedAt: updatedUser.CreatedAt,
+    	UpdatedAt: updatedUser.UpdatedAt,
+    	Email: updatedUser.Email,
+	}
+
+	respondWithJSON(w, http.StatusOK, response)
+
+}
+
 
 func (a *apiConfig) revoke(w http.ResponseWriter, r *http.Request) {
 	// get the refresh token from the header
@@ -150,7 +254,7 @@ func (a *apiConfig) refresh(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// get new JWT token and package up
+	// get new JWT token and package up for response
 	newToken, err := auth.MakeJWT(user.UserID, a.aSecret)
 	if err != nil {
 		respondWithError(w, http.StatusInternalServerError, "error creating new token")
@@ -227,7 +331,6 @@ func (a *apiConfig) login(w http.ResponseWriter, r *http.Request) {
 
 
 func (a *apiConfig) getChirpsByID(w http.ResponseWriter, r *http.Request) {
-	
 	// get the path "id" value, http.Request.PathValue
 	chirpID := r.PathValue("chirpID")
 	// convert to UUID
@@ -284,7 +387,6 @@ func (a *apiConfig) getChirps(w http.ResponseWriter, r *http.Request) {
 }
 
 func (a *apiConfig) createChirp(w http.ResponseWriter, r *http.Request) {
-	
 	// get the params from the json body
 	params := chirpParams{}
 	decoder := json.NewDecoder(r.Body)
