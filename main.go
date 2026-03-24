@@ -11,6 +11,7 @@ import (
 	"log"
 	"net/http"
 	"os"
+	"errors"
 	"sync/atomic"
 	"github.com/CromartyForth/chirpy/internal/profane"
 	"database/sql"
@@ -29,6 +30,11 @@ type MyUser struct {
 type response struct {
 	MyUser
 	Token string `json:"token"`
+	RefreshToken string `json:"refresh_token"`
+}
+
+type refreshJWT struct {
+	Token string `json:"token"`
 }
 
 type apiConfig struct {
@@ -41,7 +47,6 @@ type apiConfig struct {
 type login struct {
 	Email string `json:"email"`
 	Password string `json:"password"`
-	ExpiresInSeconds int `json:"expires_in_seconds"`
 }
 
 type myChirp struct {
@@ -96,6 +101,9 @@ func main() {
 	mux.HandleFunc("GET /api/chirps", cfig.getChirps)
 	mux.HandleFunc("GET /api/chirps/{chirpID}",cfig.getChirpsByID)
 	mux.HandleFunc("POST /api/login", cfig.login)
+	mux.HandleFunc("POST /api/refresh", cfig.refresh)
+	mux.HandleFunc("POST /api/revoke", cfig.revoke)
+	mux.HandleFunc("PUT /api/users", cfig.updateUser)
 	
 	
 	// start the server
@@ -105,6 +113,56 @@ func main() {
 		os.Exit(1)
 	}
 }
+
+func (a *apiConfig) revoke(w http.ResponseWriter, r *http.Request) {
+	// get the refresh token from the header
+	refreshToken, err:= auth.GetBearerToken(r.Header)
+	if err != nil {
+		respondWithError(w, http.StatusInternalServerError, "Error extracting token")
+		return
+	}
+
+	a.dbQueries.RevokeRefreshToken(r.Context(), refreshToken)
+
+	// respond with http.ResonseWriter
+	w.WriteHeader(http.StatusNoContent)
+	
+}
+
+
+func (a *apiConfig) refresh(w http.ResponseWriter, r *http.Request) {
+	// get the refresh token from the header
+	refreshToken, err:= auth.GetBearerToken(r.Header)
+	if err != nil {
+		respondWithError(w, http.StatusInternalServerError, "Error extracting token")
+		return
+	}
+
+	// get user from refresh token
+	user, err := a.dbQueries.GetUserFromRefreshToken(r.Context(), refreshToken)
+
+	if errors.Is(err, sql.ErrNoRows) {
+		// token not found, expired, or revoked
+		respondWithError(w, http.StatusUnauthorized, "invalid token")
+		return
+	} else if err != nil {
+		respondWithError(w, http.StatusInternalServerError, "error querying database")
+		return
+	}
+
+	// get new JWT token and package up
+	newToken, err := auth.MakeJWT(user.UserID, a.aSecret)
+	if err != nil {
+		respondWithError(w, http.StatusInternalServerError, "error creating new token")
+	}
+	respJson := refreshJWT{
+		Token: newToken,
+	}
+
+	// respond with token.
+	respondWithJSON(w, http.StatusOK, respJson)
+}
+
 
 func (a *apiConfig) login(w http.ResponseWriter, r *http.Request) {
 	// get the params from the json body
@@ -130,16 +188,24 @@ func (a *apiConfig) login(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// check the expires in param default to 1hr outside of range
-	if params.ExpiresInSeconds == 0 || params.ExpiresInSeconds > 3600 {
-		params.ExpiresInSeconds = 3600
-	}
-	expiresInSeconds := time.Duration(params.ExpiresInSeconds) * time.Second
-
-	// make token
-	myToken, err := auth.MakeJWT(user.ID, a.aSecret, expiresInSeconds)
+	// make JWT token
+	myToken, err := auth.MakeJWT(user.ID, a.aSecret)
 	if err != nil {
 		respondWithError(w, 500, "Error making token")
+	}
+
+	// get refresh token
+	rfToken := auth.MakeRefreshToken()
+
+	// register refresh token to user
+	rfParams := database.CreateRefreshTokenParams{
+		ID: rfToken,
+		UserID: user.ID,
+	}
+
+	rfID, err := a.dbQueries.CreateRefreshToken(r.Context(), rfParams)
+	if err != nil {
+		respondWithError(w, 500, "Error creating RF Token")
 	}
 
 	// format response
@@ -152,13 +218,13 @@ func (a *apiConfig) login(w http.ResponseWriter, r *http.Request) {
 	myResponse := response{
 		MyUser: myUser,
 		Token: myToken,
+		RefreshToken: rfID,
 	}
 
 	// respond to login
 	respondWithJSON(w, 200, myResponse)
-
-	
 }
+
 
 func (a *apiConfig) getChirpsByID(w http.ResponseWriter, r *http.Request) {
 	
@@ -242,7 +308,7 @@ func (a *apiConfig) createChirp(w http.ResponseWriter, r *http.Request) {
 	}
 	validID, err := auth.ValidateJWT(token, a.aSecret)
 	if err != nil {
-		respondWithError(w, 500, fmt.Sprintf("Error validating token: ", err))
+		respondWithError(w, http.StatusUnauthorized, fmt.Sprintf("Error validating token: %v", err))
 		return
 	}
 
@@ -340,40 +406,6 @@ func Readyness(w http.ResponseWriter, r *http.Request) {
 		fmt.Printf("Error writing body: %v", err)
 	}
 }
-
-/* To be removed.
-func validate(w http.ResponseWriter, r *http.Request) {
-
-	// read from body - expecting json format
-	type parameters struct {
-  		Body string `json:"body"`
-	}
-
-	decoder := json.NewDecoder(r.Body)
-	params := parameters{}
-	err := decoder.Decode(&params)
-	if err != nil {
-		respondWithError(w, 500, fmt.Sprintf("Something went wromg: %s", err))
-
-	} else if len(params.Body) > 140 {
-		fmt.Printf("Chirp Length: %v", len(params.Body))
-		respondWithError(w, 400, "Chirp is too long")
-
-	} else {
-		fmt.Printf("Chirp Length: %v", len(params.Body))
-		type respValid struct {
-			Cleaned_body string `json:"cleaned_body"`
-		}
-
-		cleanBody := profane.RemoveProfane(params.Body)
-
-		payload := respValid {
-			Cleaned_body: cleanBody,
-		}
-		respondWithJSON(w, 200, payload)
-	}
-}
-*/
 
 func respondWithError(w http.ResponseWriter, code int, msg string) {
 	type respErr struct {

@@ -1,7 +1,10 @@
 package auth
 
 import (
+	"encoding/hex"
 	"fmt"
+	// "math/rand"
+	"crypto/rand"
 	"net/http"
 	"strings"
 	"time"
@@ -31,14 +34,14 @@ func CheckPasswordHash(password string, hash string) (bool, error) {
 	return isMatch, nil
 }
 
-func MakeJWT(userID uuid.UUID, tokenSecret string, expiresIn time.Duration) (string, error) {
+func MakeJWT(userID uuid.UUID, tokenSecret string) (string, error) {
 	myLittleSecret := []byte(tokenSecret)
 
 	// claims - type Claims
 	claims := jwt.RegisteredClaims{
 		Issuer: "chirpy-access",
 		IssuedAt: jwt.NewNumericDate(time.Now()),
-		ExpiresAt: jwt.NewNumericDate(time.Now().Add(expiresIn)),
+		ExpiresAt: jwt.NewNumericDate(time.Now().Add(3600 * time.Second)),
 		Subject: userID.String(),
 	}
 
@@ -90,14 +93,9 @@ func GetBearerToken(headers http.Header) (string, error){
 	return fields[1], nil
 }
 
-/*
-val, ok := myMap["foo"]
-// If the key exists
-if ok {
-    // Do something
+func MakeRefreshToken() string {
+	key := make([]byte, 32)
+	rand.Read(key)
+	hexKey := hex.EncodeToString(key)
+	return  hexKey
 }
-
-if val, ok := myMap["foo"]; ok {
-    //do something here
-}
-*/
