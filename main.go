@@ -52,6 +52,9 @@ type myChirp struct {
 	UserID uuid.UUID `json:"user_id"`
 }
 
+type chirpParams struct {
+	Body string `json:"body"`
+}
 
 func main() {
 	// initialise apiConfig
@@ -109,7 +112,7 @@ func (a *apiConfig) login(w http.ResponseWriter, r *http.Request) {
 	decoder := json.NewDecoder(r.Body)
 	err := decoder.Decode(&params)
 	if err != nil {
-		respondWithError(w, 500, "Error decoding POST body")
+		respondWithError(w, 500, fmt.Sprintf("Error decoding POST body: %v", err))
 		return
 	}
 
@@ -217,7 +220,7 @@ func (a *apiConfig) getChirps(w http.ResponseWriter, r *http.Request) {
 func (a *apiConfig) createChirp(w http.ResponseWriter, r *http.Request) {
 	
 	// get the params from the json body
-	params := myChirp{} // partially used
+	params := chirpParams{}
 	decoder := json.NewDecoder(r.Body)
 	err := decoder.Decode(&params)
 	if err != nil {
@@ -226,13 +229,22 @@ func (a *apiConfig) createChirp(w http.ResponseWriter, r *http.Request) {
 	}
 
 	// Validate params
-	if params.Body == "" || params.UserID == uuid.Nil {
-		respondWithError(w, 400, "missing chirp or username")
+	if params.Body == ""{
+		respondWithError(w, 400, "missing chirp parameters")
 		return
 	}
 
-
-
+	// Validate JWT
+	token, err:= auth.GetBearerToken(r.Header)
+	if err != nil {
+		respondWithError(w, 500, "Error extracting token")
+		return
+	}
+	validID, err := auth.ValidateJWT(token, a.aSecret)
+	if err != nil {
+		respondWithError(w, 500, fmt.Sprintf("Error validating token: ", err))
+		return
+	}
 
 	// check length - 140 should be in config
 	if len(params.Body) > 140 {
@@ -246,7 +258,7 @@ func (a *apiConfig) createChirp(w http.ResponseWriter, r *http.Request) {
 	// chirp to chirp
 	chirpChirp := database.CreatChirpParams {
 		Body: cleanBody,
-		UserID: params.UserID,
+		UserID: validID,
 	}
 
 	chirp, err := a.dbQueries.CreatChirp(r.Context(),chirpChirp)

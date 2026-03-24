@@ -80,7 +80,6 @@ func ValidateJWT(tokenString, tokenSecret string) (uuid.UUID, error) {
 func GetBearerToken(headers http.Header) (string, error){
 	
 	// is there an Authorization header
-	
 	myValue, ok := headers["Authorization"]
 	if !ok {
 		return "", fmt.Errorf("No Authorization header")	
