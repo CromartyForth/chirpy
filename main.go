@@ -9,6 +9,7 @@ import (
 	"time"
 	"fmt"
 	"log"
+	"sort"
 	"net/http"
 	"os"
 	"errors"
@@ -43,6 +44,7 @@ type apiConfig struct {
 	dbQueries *database.Queries
 	platform string
 	aSecret string
+	polkaKey string
 }
 
 type login struct {
@@ -78,6 +80,7 @@ func main() {
 	dbURL := os.Getenv("DB_URL")
 	cfig.platform = os.Getenv("PLATFORM")
 	cfig.aSecret = os.Getenv("SECRET")
+	cfig.polkaKey = os.Getenv("POLKA_KEY")
 
 	// open connection to database, store in cfig
 	db, err := sql.Open("postgres", dbURL)
@@ -125,10 +128,17 @@ func main() {
 }
 
 func (a *apiConfig) upgradeUserByID (w http.ResponseWriter, r *http.Request) {
+	// get authorisation from header
+	token, err := auth.GetAPIKey(r.Header)
+	if err != nil || token != a.polkaKey {
+		respondWithError(w, http.StatusUnauthorized, "Error extracting token")
+		return
+	} 
+	
 	// get the params from the body
 	params := polkaEvent{}
 	decoder := json.NewDecoder(r.Body)
-	err := decoder.Decode(&params)
+	err = decoder.Decode(&params)
 	if err != nil {
 		respondWithError(w, http.StatusInternalServerError, "Error decoding body")
 	}
@@ -401,24 +411,58 @@ func (a *apiConfig) getChirpsByID(w http.ResponseWriter, r *http.Request) {
 
 
 func (a *apiConfig) getChirps(w http.ResponseWriter, r *http.Request) {
-	// collect them all
-	chirpArray, err := a.dbQueries.GetAllChirps(r.Context())
+	// get author query
+	err := r.ParseForm()
 	if err != nil {
-		respondWithError(w, 500, "error recieving from database")
+		respondWithError(w, http.StatusBadRequest, fmt.Sprintf("Error parsing author id: %v", err))
+		return
 	}
-	
+
+	chirpArray := []database.Chirp{}
+	authorID := r.Form.Get("author_id")
+	if authorID != "" {
+		// just get authors chirps
+		authorUUID, err := uuid.Parse(authorID)
+		if err != nil {
+			respondWithError(w, http.StatusBadRequest, fmt.Sprintf("malformed UUID: %v", err))
+			return
+		}
+		chirpArray, err = a.dbQueries.GetChirpsByAuthor(r.Context(), authorUUID)
+		if err != nil {
+			respondWithError(w, http.StatusNotFound, "No Chirps found for that id")
+			return
+		}
+	} else {
+		// collect them all
+		chirpArray, err = a.dbQueries.GetAllChirps(r.Context())
+		if err != nil {
+			respondWithError(w, 500, "error recieving from database")
+			return
+		}
+	}
+
 	// create array of chirps
 	newChirpArray := make([]myChirp, 0)
 	// itterate over chirpArray converting to our format
 	for _, chirp := range(chirpArray) {
 		newChirp := myChirp{
-		ID: chirp.ID,
-		CreatedAt: chirp.CreatedAt,
-		UpdatedAt: chirp.UpdatedAt,
-		Body: chirp.Body,
-		UserID: chirp.UserID,
-	}
+			ID: chirp.ID,
+			CreatedAt: chirp.CreatedAt,
+			UpdatedAt: chirp.UpdatedAt,
+			Body: chirp.Body,
+			UserID: chirp.UserID,
+		}
 		newChirpArray = append(newChirpArray, newChirp)
+	}
+
+	// sort array
+	sortQuery := r.Form.Get("sort")
+	if sortQuery == "desc" {
+		// sort decending
+		sort.Slice(newChirpArray, func(i, j int) bool { return newChirpArray[i].CreatedAt.After(newChirpArray[j].CreatedAt)})
+	} else {
+		// sort accending
+		sort.Slice(newChirpArray, func(i, j int) bool { return newChirpArray[i].CreatedAt.Before(newChirpArray[j].CreatedAt)})
 	}
 
 	respondWithJSON(w, 200, newChirpArray)

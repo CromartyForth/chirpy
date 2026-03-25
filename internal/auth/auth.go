@@ -80,8 +80,20 @@ func ValidateJWT(tokenString, tokenSecret string) (uuid.UUID, error) {
 	
 }
 
+func GetAPIKey(headers http.Header) (string, error){
+	// is there an Authorization header
+	myValue, ok := headers["Authorization"]
+	if !ok {
+		return "", fmt.Errorf("No Authorization header")
+	}
+
+	// strip "ApiKey"
+	fields := strings.Fields(myValue[0])
+	return fields[1], nil
+}
+
+
 func GetBearerToken(headers http.Header) (string, error){
-	
 	// is there an Authorization header
 	myValue, ok := headers["Authorization"]
 	if !ok {
