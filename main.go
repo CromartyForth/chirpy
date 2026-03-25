@@ -25,6 +25,7 @@ type MyUser struct {
 	CreatedAt time.Time `json:"created_at"`
 	UpdatedAt time.Time `json:"updated_at"`
 	Email string `json:"email"`
+	IsChirpyRed bool `json:"is_chirpy_red"`
 }
 
 type response struct {
@@ -59,6 +60,13 @@ type myChirp struct {
 
 type chirpParams struct {
 	Body string `json:"body"`
+}
+
+type polkaEvent struct {
+  	Event string `json:"event"`
+  	Data struct {
+    	UserID uuid.UUID `json:"user_id"`
+  	} `json:"data"`
 }
 
 func main() {
@@ -105,6 +113,7 @@ func main() {
 	mux.HandleFunc("POST /api/revoke", cfig.revoke)
 	mux.HandleFunc("PUT /api/users", cfig.updateUser)
 	mux.HandleFunc("DELETE /api/chirps/{chirpID}", cfig.deleteChirpByID)
+	mux.HandleFunc("POST /api/polka/webhooks", cfig.upgradeUserByID)
 	
 	
 	// start the server
@@ -114,6 +123,33 @@ func main() {
 		os.Exit(1)
 	}
 }
+
+func (a *apiConfig) upgradeUserByID (w http.ResponseWriter, r *http.Request) {
+	// get the params from the body
+	params := polkaEvent{}
+	decoder := json.NewDecoder(r.Body)
+	err := decoder.Decode(&params)
+	if err != nil {
+		respondWithError(w, http.StatusInternalServerError, "Error decoding body")
+	}
+
+	// is upgrade event?
+	if params.Event != "user.upgraded" {
+		w.WriteHeader(http.StatusNoContent)
+		return
+	}
+
+	// update user to chirpy red.
+	_, err = a.dbQueries.UpgradeUserByID(r.Context(), params.Data.UserID)
+	if err != nil {
+		respondWithError(w, http.StatusNotFound, "User not found")
+		return
+	}
+
+	// respond ok
+	w.WriteHeader(http.StatusNoContent)
+}
+
 
 func (a *apiConfig) deleteChirpByID (w http.ResponseWriter, r *http.Request) {
 	// get the auth token from the header
@@ -211,6 +247,7 @@ func (a *apiConfig) updateUser(w http.ResponseWriter, r *http.Request) {
     	CreatedAt: updatedUser.CreatedAt,
     	UpdatedAt: updatedUser.UpdatedAt,
     	Email: updatedUser.Email,
+		IsChirpyRed: updatedUser.IsChirpyRed,
 	}
 
 	respondWithJSON(w, http.StatusOK, response)
@@ -318,6 +355,7 @@ func (a *apiConfig) login(w http.ResponseWriter, r *http.Request) {
 		CreatedAt: user.CreatedAt, 
 		UpdatedAt: user.CreatedAt,
 		Email: user.Email,
+		IsChirpyRed: user.IsChirpyRed,
 	}
 	myResponse := response{
 		MyUser: myUser,
@@ -492,6 +530,7 @@ func (a *apiConfig) createUser(w http.ResponseWriter, r *http.Request) {
 		CreatedAt: user.CreatedAt, 
 		UpdatedAt: user.CreatedAt,
 		Email: user.Email,
+		IsChirpyRed: user.IsChirpyRed,
 	}
 
 	//marshal and respond
