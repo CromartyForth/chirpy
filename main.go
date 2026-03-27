@@ -228,7 +228,7 @@ func (a *apiConfig) updateUser(w http.ResponseWriter, r *http.Request) {
 	decoder := json.NewDecoder(r.Body)
 	err = decoder.Decode(&params)
 	if err != nil {
-		respondWithError(w, 500, fmt.Sprintf("Error decoding POST body: %v", err))
+		respondWithError(w, http.StatusInternalServerError, fmt.Sprintf("Error decoding POST body: %v", err))
 		return
 	}
 
@@ -321,28 +321,28 @@ func (a *apiConfig) login(w http.ResponseWriter, r *http.Request) {
 	decoder := json.NewDecoder(r.Body)
 	err := decoder.Decode(&params)
 	if err != nil {
-		respondWithError(w, 500, fmt.Sprintf("Error decoding POST body: %v", err))
+		respondWithError(w, http.StatusInternalServerError, fmt.Sprintf("Error decoding POST body: %v", err))
 		return
 	}
 
 	// get user by email
 	user, err := a.dbQueries.GetUserByEmail(r.Context(), params.Email)
 	if err != nil {
-		respondWithError(w, 401, "Unauthorized")
+		respondWithError(w, http.StatusUnauthorized, "Unauthorized")
 		return
 	}
 
 	// check hashes match
 	isMatch, err := auth.CheckPasswordHash(params.Password, user.HashedPassword)
 	if err != nil || isMatch == false{
-		respondWithError(w, 401, "Unauthorised")
+		respondWithError(w, http.StatusUnauthorized, "Unauthorised")
 		return
 	}
 
 	// make JWT token
 	myToken, err := auth.MakeJWT(user.ID, a.aSecret)
 	if err != nil {
-		respondWithError(w, 500, "Error making token")
+		respondWithError(w, http.StatusInternalServerError, "Error making token")
 	}
 
 	// get refresh token
@@ -356,7 +356,7 @@ func (a *apiConfig) login(w http.ResponseWriter, r *http.Request) {
 
 	rfID, err := a.dbQueries.CreateRefreshToken(r.Context(), rfParams)
 	if err != nil {
-		respondWithError(w, 500, "Error creating RF Token")
+		respondWithError(w, http.StatusInternalServerError, "Error creating RF Token")
 	}
 
 	// format response
@@ -374,7 +374,7 @@ func (a *apiConfig) login(w http.ResponseWriter, r *http.Request) {
 	}
 
 	// respond to login
-	respondWithJSON(w, 200, myResponse)
+	respondWithJSON(w, http.StatusOK, myResponse)
 }
 
 
@@ -384,14 +384,14 @@ func (a *apiConfig) getChirpsByID(w http.ResponseWriter, r *http.Request) {
 	// convert to UUID
 	chirpUUID, err := uuid.Parse(chirpID)
 	if err != nil {
-		respondWithError(w, 404, "Invalid UUID")
+		respondWithError(w, http.StatusBadRequest, "Invalid UUID")
 		return
 	}
 
 	// git it from the database
 	chirp, err := a.dbQueries.GetChirpByID(r.Context(), chirpUUID)
 	if err != nil {
-		respondWithError(w, 404, "Chirp not found")
+		respondWithError(w, http.StatusNotFound, "Chirp not found")
 		return
 	}
 	
@@ -405,7 +405,7 @@ func (a *apiConfig) getChirpsByID(w http.ResponseWriter, r *http.Request) {
 	}
 
 	// sent response
-	respondWithJSON(w, 200, chirpJSON)
+	respondWithJSON(w, http.StatusOK, chirpJSON)
 }
 
 
@@ -436,7 +436,7 @@ func (a *apiConfig) getChirps(w http.ResponseWriter, r *http.Request) {
 		// collect them all
 		chirpArray, err = a.dbQueries.GetAllChirps(r.Context())
 		if err != nil {
-			respondWithError(w, 500, "error recieving from database")
+			respondWithError(w, http.StatusInternalServerError, "error recieving from database")
 			return
 		}
 	}
@@ -465,7 +465,7 @@ func (a *apiConfig) getChirps(w http.ResponseWriter, r *http.Request) {
 		sort.Slice(newChirpArray, func(i, j int) bool { return newChirpArray[i].CreatedAt.Before(newChirpArray[j].CreatedAt)})
 	}
 
-	respondWithJSON(w, 200, newChirpArray)
+	respondWithJSON(w, http.StatusOK, newChirpArray)
 }
 
 func (a *apiConfig) createChirp(w http.ResponseWriter, r *http.Request) {
@@ -474,20 +474,20 @@ func (a *apiConfig) createChirp(w http.ResponseWriter, r *http.Request) {
 	decoder := json.NewDecoder(r.Body)
 	err := decoder.Decode(&params)
 	if err != nil {
-		respondWithError(w, 500, "Error decoding POST body")
+		respondWithError(w, http.StatusInternalServerError, "Error decoding POST body")
 		return
 	}
 
 	// Validate params
 	if params.Body == ""{
-		respondWithError(w, 400, "missing chirp parameters")
+		respondWithError(w, http.StatusBadRequest, "missing chirp parameters")
 		return
 	}
 
 	// Validate JWT
 	token, err:= auth.GetBearerToken(r.Header)
 	if err != nil {
-		respondWithError(w, 500, "Error extracting token")
+		respondWithError(w, http.StatusInternalServerError, "Error extracting token")
 		return
 	}
 	validID, err := auth.ValidateJWT(token, a.aSecret)
@@ -499,7 +499,7 @@ func (a *apiConfig) createChirp(w http.ResponseWriter, r *http.Request) {
 	// check length - 140 should be in config
 	if len(params.Body) > 140 {
 		fmt.Printf("Chirp Length: %v", len(params.Body))
-		respondWithError(w, 400, "Chirp is too long")
+		respondWithError(w, http.StatusBadRequest, "Chirp is too long")
 	}
 
 	// remove profanity
@@ -513,7 +513,7 @@ func (a *apiConfig) createChirp(w http.ResponseWriter, r *http.Request) {
 
 	chirp, err := a.dbQueries.CreatChirp(r.Context(),chirpChirp)
 	if err != nil {
-		respondWithError(w, 500, fmt.Sprintf("Error creating chirp in database: %v", err))
+		respondWithError(w, http.StatusInternalServerError, fmt.Sprintf("Error creating chirp in database: %v", err))
 		return
 	}
 
@@ -527,7 +527,7 @@ func (a *apiConfig) createChirp(w http.ResponseWriter, r *http.Request) {
 	}
 
 	// respond ok
-	respondWithJSON(w, 201, newChirp)
+	respondWithJSON(w, http.StatusCreated, newChirp)
 }
 
 
@@ -538,17 +538,17 @@ func (a *apiConfig) createUser(w http.ResponseWriter, r *http.Request) {
 	decoder := json.NewDecoder(r.Body)
 	err := decoder.Decode(&params)
 	if err != nil {
-		respondWithError(w, 500, "Error decoding POST body")
+		respondWithError(w, http.StatusInternalServerError, "Error decoding POST body")
 		return
 	}
 
 	// validate email - This could be a whole fuction using regex ect
 	if params.Email == "" {
-		respondWithError(w, 400, "Email not supplied")
+		respondWithError(w, http.StatusBadRequest, "Email not supplied")
 		return
 	}
 	if params.Password == "" {
-		respondWithError(w, 400, "Password not supplied")
+		respondWithError(w, http.StatusBadRequest, "Password not supplied")
 		return
 	}
 
@@ -564,7 +564,7 @@ func (a *apiConfig) createUser(w http.ResponseWriter, r *http.Request) {
 	// create user
 	user, err := a.dbQueries.CreateUser(r.Context(), userParams)
 	if err != nil {
-		respondWithError(w, 500, fmt.Sprintf("Error creating user: %v", err))
+		respondWithError(w, http.StatusInternalServerError, fmt.Sprintf("Error creating user: %v", err))
 		return
 	}
 
@@ -585,7 +585,7 @@ func (a *apiConfig) createUser(w http.ResponseWriter, r *http.Request) {
 
 func Readyness(w http.ResponseWriter, r *http.Request) {
 	w.Header().Add("Content-Type", "text/plain; charset=utf-8")
-	w.WriteHeader(200)
+	w.WriteHeader(http.StatusOK)
 	_, err := w.Write([]byte("OK\n"))
 	if err != nil {
 		fmt.Printf("Error writing body: %v", err)
@@ -649,14 +649,14 @@ func (a *apiConfig) getCount(w http.ResponseWriter, r *http.Request) {
 func (a *apiConfig) reset(w http.ResponseWriter, r *http.Request) {
 	// development only
 	if a.platform != "dev" {
-		respondWithError(w, 403, "Forbidden!")
+		respondWithError(w, http.StatusForbidden, "Forbidden!")
 		return
 	}
 
 	// delete all users
 	err := a.dbQueries.DeleteAllUsers(r.Context())
 	if err != nil {
-		respondWithError(w, 500, "error deleting users")
+		respondWithError(w, http.StatusInternalServerError, "error deleting users")
 		return
 	}
 	
